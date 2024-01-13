@@ -1,4 +1,4 @@
-pub const MATCH_THRESHOLD:u64 = 100_000_000_000_000;
+pub const MATCH_THRESHOLD:u64 = 1_000_000_000;
 
 pub mod signing_authority {
     use anchor_lang::declare_id;

@@ -13,14 +13,12 @@ use anchor_lang::{
 use anchor_spl::{
     token::{
         TokenAccount, 
-        Transfer as TransferSPL, 
-        transfer as transfer_spl, 
         Token, 
         Mint, 
         Burn, 
         burn
     }, 
-    associated_token::AssociatedToken
+    associated_token::{AssociatedToken, get_associated_token_address}
 };
 
 use crate::{
@@ -30,24 +28,18 @@ use crate::{
         SharedAccountsRoute, 
         self
     },
-    constants::{ MATCH_THRESHOLD, signing_authority}, 
+    constants::signing_authority, 
     require_discriminator_eq, 
     require_instruction_eq, errors::BonkPawsError,
-    state::DonationState
+    state::{DonationState, MatchDonation}
 };
 
 #[derive(Accounts)]
-pub struct Donate<'info> {
+#[instruction(_seed: u64)]
+pub struct FinalizeSolDonation<'info> {
+    #[account(mut)] // Hardcode to Bonk Wallet
+    authority: Signer<'info>,
     #[account(mut)]
-    donor: Signer<'info>,
-    #[account(
-        init_if_needed,
-        payer = donor,
-        seeds = [b"state"],
-        bump,    
-        space = DonationState::INIT_SPACE
-    )]
-    bonk_state: Account<'info, DonationState>,
     charity: SystemAccount<'info>,
     #[account(
         mut,
@@ -57,30 +49,24 @@ pub struct Donate<'info> {
     #[account(
         mut,
         associated_token::mint = bonk,
-        associated_token::authority = donor,
-        // address = wsol::ID ???
+        associated_token::authority = authority,
     )]
-    donor_bonk: Account<'info, TokenAccount>,
+    authority_bonk: Account<'info, TokenAccount>,
+
     #[account(
         mut,
-        seeds = [b"pool_bonk"],
-        bump,
-        token::mint = bonk,
-        token::authority = pool_bonk
+        seeds = [b"state"],
+        bump,    
     )]
-    pool_bonk: Account<'info, TokenAccount>,
-    #[account(
-        address = wsol::ID
-    )]
-    wsol: Account<'info, Mint>,
+    bonk_state: Account<'info, DonationState>,
     #[account(
         mut,
-        seeds = [b"pool_wsol", donor.key().as_ref(), charity.key().as_ref()],
+        close = authority,
+        seeds = [b"match_donation", _seed.to_le_bytes().as_ref()],
         bump,
-        token::mint = wsol,
-        token::authority = pool_wsol
     )]
-    pool_wsol: Account<'info, TokenAccount>,
+    match_donation_state: Account<'info, MatchDonation>,
+
     #[account(address = sysvar::instructions::ID)]
     /// CHECK: InstructionsSysvar account
     instructions: UncheckedAccount<'info>,
@@ -89,79 +75,23 @@ pub struct Donate<'info> {
     system_program: Program<'info, System>
 }
 
-impl<'info> Donate<'info> {        
-    pub fn match_burn_and_swap(&mut self, bonk_donation: u64, min_lamports_out: u64) -> Result<()> {
-        let signer_seeds: [&[&[u8]];1] = [&[b"pool_bonk"]];
-
-        /* 
+impl<'info> FinalizeSolDonation<'info> {        
+    pub fn finalize_sol_donation(&mut self, _seed: u64, bonk_donation: u64) -> Result<()> {
         
-        Burn 1% of Donation
-
-        After configuring the finaly donation amount, we calculate 1% of 
-        it and burn it from our BONK pool
-
-        */
-
         // Burn 1% of deposit in Bonk -> Do we want to burn it only if you match?
         let burn_accounts = Burn {
             mint: self.bonk.to_account_info(),
-            from: self.pool_bonk.to_account_info(),
-            authority: self.pool_bonk.to_account_info()
+            from: self.authority_bonk.to_account_info(),
+            authority: self.authority.to_account_info()
         };
 
-        let burn_ctx = CpiContext::new_with_signer(
-            self.token_program.to_account_info(), 
-            burn_accounts,
-            &signer_seeds);
+        let burn_ctx = CpiContext::new(self.token_program.to_account_info(), burn_accounts);
 
         burn(burn_ctx, bonk_donation.checked_div(100).unwrap())?; // ???
         self.bonk_state.bonk_burned = self.bonk_state.bonk_burned.checked_add(bonk_donation.checked_div(100).unwrap() as u128).unwrap();
 
+        // Updated the BonkState
         self.bonk_state.bonk_donated = self.bonk_state.bonk_donated.checked_add(bonk_donation as u128).unwrap();
-
-        /* 
-        
-        Match Donation
-
-        We need to check to see if the donated amount of BONK exceeds
-        the match threshold. If it does, we will match the donation 1:1
-        from our BONK pool. We will also count this as the donation
-        amount in our burn calculation. 
-        
-        To save on resources, instead of creating a vault for the matched
-        BONK, we simply send it to the donor's ATA. 
-        
-        This is secure by virtue of the transaction only being able
-        to succeed if there also a Jupiter swap and Finalize instruction 
-        present after the Donate instruction. We also don't allow CPI.
-
-        */
-
-        let mut swap_amount = bonk_donation;
-
-        // Match donation if the value in bonk exceeds the 1 $SOL threshold (We check it out 
-        // by making sure that the minimum lamports out is greater than 1_000_000_000)
-        if min_lamports_out >= MATCH_THRESHOLD {
-            let transfer_accounts = TransferSPL {
-                from: self.pool_bonk.to_account_info(),
-                to: self.donor_bonk.to_account_info(),
-                authority: self.pool_bonk.to_account_info()
-            };
-
-
-            let transfer_ctx = CpiContext::new_with_signer(
-                self.token_program.to_account_info(),
-                transfer_accounts,
-                &signer_seeds
-            );
-
-            transfer_spl(transfer_ctx, bonk_donation)?;
-
-            swap_amount = swap_amount.checked_add(bonk_donation).ok_or(BonkPawsError::InvalidAmount)?;
-
-            // Update the BonkState
-            self.bonk_state.bonk_donated = self.bonk_state.bonk_donated.checked_add(bonk_donation as u128).unwrap();
-        }
 
         /* 
         
@@ -225,6 +155,11 @@ impl<'info> Donate<'info> {
         Basically, the only way this rugs is if Jupiter gets hacked.
         */
 
+        let swap_amount = bonk_donation.checked_mul(99).unwrap().checked_div(100).unwrap();
+        let min_lamports_out = self.match_donation_state.amount.checked_mul(99).unwrap().checked_div(100).unwrap();
+        let max_lamports_out = min_lamports_out + min_lamports_out.checked_mul(5).unwrap().checked_div(10).unwrap();
+
+
         if let Ok(ix) = load_instruction_at_checked(current_index + 1, &ixs) {
             // Instruction checks
             require_instruction_eq!(ix, jupiter::ID, SharedAccountsRoute::DISCRIMINATOR, BonkPawsError::InvalidInstruction);
@@ -232,53 +167,41 @@ impl<'info> Donate<'info> {
             require_eq!(shared_account_route_ix.in_amount, swap_amount, BonkPawsError::InvalidAmount);
             require_eq!(shared_account_route_ix.slippage_bps, 50, BonkPawsError::InvalidSlippage);
             require_gte!(shared_account_route_ix.route_plan.len(), 1, BonkPawsError::InvalidRoute);
-            require_gte!(shared_account_route_ix.quoted_out_amount, min_lamports_out, BonkPawsError::InvalidSolanaAmount);
+            require!(shared_account_route_ix.quoted_out_amount > min_lamports_out && shared_account_route_ix.quoted_out_amount < max_lamports_out, BonkPawsError::InvalidSolanaAmount);
 
             // BONK account checks
             require_keys_eq!(ix.accounts.get(7).ok_or(BonkPawsError::InvalidBonkMint)?.pubkey, self.bonk.key(), BonkPawsError::InvalidBonkMint);
-            require_keys_eq!(ix.accounts.get(3).ok_or(BonkPawsError::InvalidBonkATA)?.pubkey, self.donor_bonk.key(), BonkPawsError::InvalidBonkATA);
-            require_keys_eq!(ix.accounts.get(2).ok_or(BonkPawsError::InvalidBonkAccount)?.pubkey, self.donor.key(), BonkPawsError::InvalidBonkAccount); // ???
+            require_keys_eq!(ix.accounts.get(3).ok_or(BonkPawsError::InvalidBonkATA)?.pubkey, self.authority_bonk.key(), BonkPawsError::InvalidBonkATA);
+            require_keys_eq!(ix.accounts.get(2).ok_or(BonkPawsError::InvalidBonkAccount)?.pubkey, self.authority.key(), BonkPawsError::InvalidBonkAccount);
 
-            // Added wSol account checks 
-            require_keys_eq!(ix.accounts.get(8).ok_or(BonkPawsError::InvalidwSolMint)?.pubkey, self.wsol.key(), BonkPawsError::InvalidwSolMint);
-            require_keys_eq!(ix.accounts.get(6).ok_or(BonkPawsError::InvalidwSolATA)?.pubkey, self.pool_wsol.key(), BonkPawsError::InvalidwSolATA);
+            // wSOL account checks
+            let wsol_ata = get_associated_token_address(&self.authority.key(), &wsol::ID);
+
+            require_keys_eq!(ix.accounts.get(8).ok_or(BonkPawsError::InvalidwSolMint)?.pubkey, wsol::ID, BonkPawsError::InvalidwSolMint);
+            require_keys_eq!(ix.accounts.get(6).ok_or(BonkPawsError::InvalidwSolATA)?.pubkey, wsol_ata, BonkPawsError::InvalidwSolATA);
         } else {
             return Err(BonkPawsError::MissingSwapIx.into());
         }
 
         /* 
         
-        Match Finalize Instruction
-        
-        We also ensure that after swapping on Jupiter, we clean up our 
-        wSOL ATA, sending swapped lamports to the charity address and
-        refunding rent-exempt sats to the donor. 
-        
-        To avoid adding another account for a vault, we simply save the
-        "amount" from the wSOL ATA, close it, sending the entire lamport 
-        balance to the donor's signing keypair, before finally sending 
-        the non-rent except amount from the donor to the charity account.
+        Transfer to Charity Instruction - ToDo Docs
 
-        We also peform the following checks:
-
-        - Program ID and IX discriminator
-        - SOL account matching
-        - min_lamports_out balance
+        Ensure that the next instruction after the swap is a transfer
         */
 
         // Ensure we have a finalize ix
-        if let Ok(ix) = load_instruction_at_checked(current_index + 2, &ixs) {
+        if let Ok(ix) = load_instruction_at_checked(current_index + 3, &ixs) {
             // Instruction checks
-            require_instruction_eq!(ix, crate::ID, crate::instruction::Finalize::DISCRIMINATOR, BonkPawsError::InvalidInstruction);
-            let finalize_ix = crate::instruction::Finalize::try_from_slice(&ix.data[8..])?;
+            require_keys_eq!(ix.program_id, self.system_program.key(),  BonkPawsError::InvalidInstruction);
+            require_eq!(ix.data[0], 2u8, BonkPawsError::InvalidInstruction);
 
-            require_eq!(min_lamports_out, finalize_ix.min_lamports_out, BonkPawsError::InvalidLamportsBalance);
-
-            // SOL account checks
-            require_keys_eq!(ix.accounts.get(1).ok_or(BonkPawsError::InvalidCharityAddress)?.pubkey, charity_key);
+            require!(ix.data[4..12].eq(&min_lamports_out.to_le_bytes()), BonkPawsError::InvalidAmount);
+            require_keys_eq!(ix.accounts.get(1).unwrap().pubkey, charity_key, BonkPawsError::InvalidCharityAddress);
         } else {
             return Err(BonkPawsError::MissingFinalizeIx.into());
         }
+        
         Ok(())
     }
 }

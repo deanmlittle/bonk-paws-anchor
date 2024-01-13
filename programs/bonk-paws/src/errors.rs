@@ -26,6 +26,10 @@ pub enum BonkPawsError {
     InvalidBonkAccount,
     #[msg("Invalid BONK ATA")]
     InvalidBonkATA,
+    #[msg("Invalid wSOL mint address")]
+    InvalidwSolMint,
+    #[msg("Invalid wSOL ATA")]
+    InvalidwSolATA,
     #[msg("Invalid wSOL account")]
     InvalidwSolAccount,
     #[msg("Invalid wSOL balance")]
@@ -40,4 +44,7 @@ pub enum BonkPawsError {
     SignatureHeaderMismatch,
     #[msg("Signature authority mismatch")]
     SignatureAuthorityMismatch,
+
+    #[msg("Not enough SOL Donated to Match")]
+    NotMatchingDonation,
 }

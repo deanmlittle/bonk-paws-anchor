@@ -6,6 +6,7 @@ pub mod mints;
 pub mod errors;
 pub mod macros;
 pub mod constants;
+pub mod state;
 
 use contexts::*;
 
