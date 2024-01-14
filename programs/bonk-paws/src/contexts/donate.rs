@@ -40,6 +40,11 @@ use crate::{
 pub struct Donate<'info> {
     #[account(mut)]
     donor: Signer<'info>,
+    #[account(
+        mut,
+        // Hardcode it
+    )]
+    authority: Signer<'info>,
     charity: SystemAccount<'info>,
     
     #[account(
@@ -54,6 +59,12 @@ pub struct Donate<'info> {
     )]
     donor_bonk: Account<'info, TokenAccount>,
     #[account(
+        mut,
+        associated_token::mint = bonk,
+        associated_token::authority = authority,
+    )]
+    authority_bonk: Account<'info, TokenAccount>,
+    #[account(
         address = wsol::ID
     )]
     wsol: Account<'info, Mint>,
@@ -65,14 +76,6 @@ pub struct Donate<'info> {
     )]
     donor_wsol: Account<'info, TokenAccount>,
 
-    #[account(
-        mut,
-        seeds = [b"pool_bonk"],
-        bump,
-        token::mint = bonk,
-        token::authority = pool_bonk
-    )]
-    pool_bonk: Account<'info, TokenAccount>,
     #[account(
         init_if_needed,
         payer = donor,
@@ -118,8 +121,6 @@ impl<'info> Donate<'info> {
 
         */        
 
-        let signer_seeds: [&[&[u8]];1] = [&[b"pool_bonk"]];
-
         // Check if the Threshold is met
         if min_lamports_out >= MATCH_THRESHOLD {
 
@@ -130,11 +131,11 @@ impl<'info> Donate<'info> {
 
             // Transfer Bonk from vault to Donor
             let transfer_accounts = TransferSPL {
-                from: self.pool_bonk.to_account_info(),
+                from: self.authority_bonk.to_account_info(),
                 to: self.donor_bonk.to_account_info(),
-                authority: self.pool_bonk.to_account_info()
+                authority: self.authority.to_account_info()
             };
-            let transfer_ctx = CpiContext::new_with_signer(self.token_program.to_account_info(), transfer_accounts, &signer_seeds);
+            let transfer_ctx = CpiContext::new(self.token_program.to_account_info(), transfer_accounts);
 
             transfer_spl(transfer_ctx, bonk_donation)?;
 
