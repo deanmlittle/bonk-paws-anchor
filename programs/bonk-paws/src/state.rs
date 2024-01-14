@@ -4,7 +4,7 @@ use anchor_lang::prelude::*;
 pub struct DonationState {
     pub bonk_burned: u128,
     pub bonk_donated: u128,
-    pub sol_donated: u128, // Do we want to track $SOL donated?
+    pub bonk_matched: u128,
 
 }
 

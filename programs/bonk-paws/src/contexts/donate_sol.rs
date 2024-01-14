@@ -20,16 +20,16 @@ use crate::{
 pub struct DonateSol<'info> {
     #[account(mut)]
     donor: Signer<'info>,
-    #[account(mut)]
     charity: SystemAccount<'info>,
+
     #[account(
         init_if_needed,
         payer = donor,
-        seeds = [b"info"],
+        seeds = [b"donation_state"],
         bump,    
         space = DonationState::INIT_SPACE
     )]
-    bonk_state: Account<'info, DonationState>,
+    donation_state: Account<'info, DonationState>,
     #[account(
         init,
         payer = donor,
@@ -46,19 +46,17 @@ pub struct DonateSol<'info> {
 }
 
 impl<'info> DonateSol<'info> {        
-    pub fn donate_sol(&mut self, _seed: u64, sol_donation: u64) -> Result<()> {
+    pub fn donate_sol(&mut self, _seed: u64, sol_donation: u64, id: u64) -> Result<()> {
         
+        /*
+        
+        Send the SOL to the charity address and if we need to match create an istance where we Donate -> Redo Docs
+        
+        */
+
         // We check that the MatchDonation State is initialized only when the threshold is met
         require!(sol_donation < MATCH_THRESHOLD && self.match_donation_state.is_some(), BonkPawsError::NotMatchingDonation); // Double check with testa
 
-        // Updated the BonkState
-        self.bonk_state.sol_donated = self.bonk_state.sol_donated.checked_add(sol_donation as u128).unwrap();
-
-        /*
-        
-        Send the SOL to the charity address -> Redo Docs
-        
-        */
 
         let transfer_accounts = Transfer {
             from: self.donor.to_account_info(),
@@ -68,29 +66,45 @@ impl<'info> DonateSol<'info> {
 
         transfer(transfer_cpi, sol_donation)?;
 
+        // If we have to match later we need to create the MatchDonation State
+        if self.match_donation_state.is_some() {
+            self.match_donation_state.as_mut().unwrap().set_inner(           
+                MatchDonation {
+                    id,
+                    amount: sol_donation
+                }
+            );
+        }
+
         /* 
         
-        Instruction Introspection
+            Instruction Introspection
 
-        This is the primary means by which we secure our program,
-        enforce atomicity while making a great UX for our users.
+            This is the primary means by which we secure our program,
+            enforce atomicity while making a great UX for our users.
+
         */
         let ixs = self.instructions.to_account_info();
 
         /*
-        Disable CPIs
-        
-        Although we have taken numerous measures to secure this program,
-        we can kill CPI to close off even more attack vectors as our 
-        current use case doesn't need it.
+
+            Disable CPIs
+            
+            Although we have taken numerous measures to secure this program,
+            we can kill CPI to close off even more attack vectors as our 
+            current use case doesn't need it.
+
         */
+
         let current_index = load_current_index_checked(&ixs)? as usize;
         require_gte!(current_index, 1, BonkPawsError::InvalidInstructionIndex);
         let current_ix = load_instruction_at_checked(current_index, &ixs)?;
         require!(crate::check_id(&current_ix.program_id), BonkPawsError::ProgramMismatch);
 
         /*
-        Make sure previous IX is an ed25519 signature verifying the donation address
+        
+            Make sure previous IX is an ed25519 signature verifying the donation address
+
         */
         
         // Check program ID is instructions sysvar
@@ -102,6 +116,12 @@ impl<'info> DonateSol<'info> {
 
         // Ensure signing authority is correct
         require!(signing_authority::ID.to_bytes().eq(&signature_ix.data[16..48]), BonkPawsError::SignatureAuthorityMismatch);
+
+        // Get the charity ID for later verification
+        // ToDo
+
+        // Ensure that the Transfer is going to the right charity ID
+        //require!()
 
         // Get charity account key for later verification:
         let mut charity_key_data: [u8;32] = [0u8;32]; 

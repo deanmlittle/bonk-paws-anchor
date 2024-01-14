@@ -40,15 +40,8 @@ use crate::{
 pub struct Donate<'info> {
     #[account(mut)]
     donor: Signer<'info>,
-    #[account(
-        init_if_needed,
-        payer = donor,
-        seeds = [b"state"],
-        bump,    
-        space = DonationState::INIT_SPACE
-    )]
-    bonk_state: Account<'info, DonationState>,
     charity: SystemAccount<'info>,
+    
     #[account(
         mut,
         address = bonk::ID
@@ -58,9 +51,20 @@ pub struct Donate<'info> {
         mut,
         associated_token::mint = bonk,
         associated_token::authority = donor,
-        // address = wsol::ID ???
     )]
     donor_bonk: Account<'info, TokenAccount>,
+    #[account(
+        address = wsol::ID
+    )]
+    wsol: Account<'info, Mint>,
+    #[account(
+        init_if_needed,
+        payer = donor,
+        associated_token::mint = wsol,
+        associated_token::authority = donor,
+    )]
+    donor_wsol: Account<'info, TokenAccount>,
+
     #[account(
         mut,
         seeds = [b"pool_bonk"],
@@ -70,17 +74,14 @@ pub struct Donate<'info> {
     )]
     pool_bonk: Account<'info, TokenAccount>,
     #[account(
-        address = wsol::ID
+        init_if_needed,
+        payer = donor,
+        seeds = [b"donation_state"],
+        bump,    
+        space = DonationState::INIT_SPACE
     )]
-    wsol: Account<'info, Mint>,
-    #[account(
-        mut,
-        seeds = [b"pool_wsol", donor.key().as_ref(), charity.key().as_ref()],
-        bump,
-        token::mint = wsol,
-        token::authority = pool_wsol
-    )]
-    pool_wsol: Account<'info, TokenAccount>,
+    donation_state: Account<'info, DonationState>,
+
     #[account(address = sysvar::instructions::ID)]
     /// CHECK: InstructionsSysvar account
     instructions: UncheckedAccount<'info>,
@@ -91,101 +92,98 @@ pub struct Donate<'info> {
 
 impl<'info> Donate<'info> {        
     pub fn match_burn_and_swap(&mut self, bonk_donation: u64, min_lamports_out: u64) -> Result<()> {
-        let signer_seeds: [&[&[u8]];1] = [&[b"pool_bonk"]];
-
-        /* 
-        
-        Burn 1% of Donation
-
-        After configuring the finaly donation amount, we calculate 1% of 
-        it and burn it from our BONK pool
-
-        */
-
-        // Burn 1% of deposit in Bonk -> Do we want to burn it only if you match?
-        let burn_accounts = Burn {
-            mint: self.bonk.to_account_info(),
-            from: self.pool_bonk.to_account_info(),
-            authority: self.pool_bonk.to_account_info()
-        };
-
-        let burn_ctx = CpiContext::new_with_signer(
-            self.token_program.to_account_info(), 
-            burn_accounts,
-            &signer_seeds);
-
-        burn(burn_ctx, bonk_donation.checked_div(100).unwrap())?; // ???
-        self.bonk_state.bonk_burned = self.bonk_state.bonk_burned.checked_add(bonk_donation.checked_div(100).unwrap() as u128).unwrap();
-
-        self.bonk_state.bonk_donated = self.bonk_state.bonk_donated.checked_add(bonk_donation as u128).unwrap();
-
-        /* 
-        
-        Match Donation
-
-        We need to check to see if the donated amount of BONK exceeds
-        the match threshold. If it does, we will match the donation 1:1
-        from our BONK pool. We will also count this as the donation
-        amount in our burn calculation. 
-        
-        To save on resources, instead of creating a vault for the matched
-        BONK, we simply send it to the donor's ATA. 
-        
-        This is secure by virtue of the transaction only being able
-        to succeed if there also a Jupiter swap and Finalize instruction 
-        present after the Donate instruction. We also don't allow CPI.
-
-        */
 
         let mut swap_amount = bonk_donation;
 
-        // Match donation if the value in bonk exceeds the 1 $SOL threshold (We check it out 
-        // by making sure that the minimum lamports out is greater than 1_000_000_000)
+        // Update on the BonkState the bonk_donated amount
+        self.donation_state.bonk_donated = self.donation_state.bonk_donated.checked_add(bonk_donation as u128).unwrap();
+
+        /* 
+        
+            Match Donation & Burn
+
+            We need to check to see if the donated amount of BONK exceeds
+            the match threshold (1 Solana). 
+            
+            If it does:
+            - We will match the donation 1:1 from our BONK pool. 
+            - Burn 1% of Matched Donation
+
+            To save on resources, instead of creating a vault for the matched
+            BONK, we simply send it to the donor's ATA. 
+            
+            This is secure by virtue of the transaction only being able
+            to succeed if there also a Jupiter swap and Finalize instruction 
+            present after the Donate instruction. We also don't allow CPI.
+
+        */        
+
+        let signer_seeds: [&[&[u8]];1] = [&[b"pool_bonk"]];
+
+        // Check if the Threshold is met
         if min_lamports_out >= MATCH_THRESHOLD {
+
+            swap_amount = swap_amount.checked_add(bonk_donation).ok_or(BonkPawsError::InvalidAmount)?;
+
+            // Update on the BonkState the bonk_matched amount (99% of the pool_match)
+            self.donation_state.bonk_matched = self.donation_state.bonk_matched.checked_add(bonk_donation.checked_mul(99).unwrap().checked_div(100).unwrap() as u128).unwrap();
+
+            // Transfer Bonk from vault to Donor
             let transfer_accounts = TransferSPL {
                 from: self.pool_bonk.to_account_info(),
                 to: self.donor_bonk.to_account_info(),
                 authority: self.pool_bonk.to_account_info()
             };
-
-
-            let transfer_ctx = CpiContext::new_with_signer(
-                self.token_program.to_account_info(),
-                transfer_accounts,
-                &signer_seeds
-            );
+            let transfer_ctx = CpiContext::new_with_signer(self.token_program.to_account_info(), transfer_accounts, &signer_seeds);
 
             transfer_spl(transfer_ctx, bonk_donation)?;
 
-            swap_amount = swap_amount.checked_add(bonk_donation).ok_or(BonkPawsError::InvalidAmount)?;
+            // Burn 1% of deposit in Bonk
+            let burn_accounts = Burn {
+                mint: self.bonk.to_account_info(),
+                from: self.donor_bonk.to_account_info(),
+                authority: self.donor.to_account_info()
+            };
+            let burn_ctx = CpiContext::new(self.token_program.to_account_info(), burn_accounts);
 
-            // Update the BonkState
-            self.bonk_state.bonk_donated = self.bonk_state.bonk_donated.checked_add(bonk_donation as u128).unwrap();
+            burn(burn_ctx, bonk_donation.checked_div(100).unwrap())?;
+
+            // Update on the BonkState the bonk_burned amount (1% of the pool_match)
+            self.donation_state.bonk_burned = self.donation_state.bonk_burned.checked_add(bonk_donation.checked_div(100).unwrap() as u128).unwrap();
         }
 
         /* 
         
-        Instruction Introspection
+            Instruction Introspection
 
-        This is the primary means by which we secure our program,
-        enforce atomicity while making a great UX for our users.
+            This is the primary means by which we secure our program,
+            enforce atomicity while making a great UX for our users.
+
         */
+
         let ixs = self.instructions.to_account_info();
 
         /*
-        Disable CPIs
-        
-        Although we have taken numerous measures to secure this program,
-        we can kill CPI to close off even more attack vectors as our 
-        current use case doesn't need it.
+
+            Pt 1 - Disable CPIs
+            
+            Although we have taken numerous measures to secure this program,
+            we can kill CPI to close off even more attack vectors as our 
+            current use case doesn't need it.
+
         */
+
         let current_index = load_current_index_checked(&ixs)? as usize;
         require_gte!(current_index, 1, BonkPawsError::InvalidInstructionIndex);
         let current_ix = load_instruction_at_checked(current_index, &ixs)?;
         require!(crate::check_id(&current_ix.program_id), BonkPawsError::ProgramMismatch);
 
         /*
-        Make sure previous IX is an ed25519 signature verifying the donation address
+
+            Pt2 - Verify Donor Address
+
+            [Doc...]Make sure previous IX is an ed25519 signature verifying the donation address
+
         */
         
         // Check program ID is instructions sysvar
@@ -205,27 +203,29 @@ impl<'info> Donate<'info> {
 
         /* 
         
-        Match Jupiter Swap Instruction
-        
-        Ensure that the next instruction after this one is a swap in the
-        Jupiter program. Checks include:
+            Pt3 - Match Jupiter Swap Instruction
+            
+            Ensure that the next instruction after this one is a swap in the
+            Jupiter program. Checks include:
 
-        - Program ID and IX discriminator
-        - Token account matching
-        - Mint account matching
-        - Deposit amount matching
-        - Minimum SOL amount matching
-        - Max slippage protection
+            - Program ID and IX discriminator
+            - Token account matching
+            - Mint account matching
+            - Deposit amount matching
+            - Minimum SOL amount matching
+            - Max slippage protection
 
-        By matching token accounts against our account struct which already 
-        enforces mint constraints, we should be able to deduce the mint
-        accounts in the instruction also match. Alas, we check them anyway
-        just to be extra safe.
+            By matching token accounts against our account struct which already 
+            enforces mint constraints, we should be able to deduce the mint
+            accounts in the instruction also match. Alas, we check them anyway
+            just to be extra safe.
 
-        Basically, the only way this rugs is if Jupiter gets hacked.
+            Basically, the only way this rugs is if Jupiter gets hacked.
+
         */
 
         if let Ok(ix) = load_instruction_at_checked(current_index + 1, &ixs) {
+            
             // Instruction checks
             require_instruction_eq!(ix, jupiter::ID, SharedAccountsRoute::DISCRIMINATOR, BonkPawsError::InvalidInstruction);
             let shared_account_route_ix = SharedAccountsRoute::try_from_slice(&ix.data[8..])?;
@@ -234,47 +234,44 @@ impl<'info> Donate<'info> {
             require_gte!(shared_account_route_ix.route_plan.len(), 1, BonkPawsError::InvalidRoute);
             require_gte!(shared_account_route_ix.quoted_out_amount, min_lamports_out, BonkPawsError::InvalidSolanaAmount);
 
-            // BONK account checks
+            // Bonk account checks
             require_keys_eq!(ix.accounts.get(7).ok_or(BonkPawsError::InvalidBonkMint)?.pubkey, self.bonk.key(), BonkPawsError::InvalidBonkMint);
             require_keys_eq!(ix.accounts.get(3).ok_or(BonkPawsError::InvalidBonkATA)?.pubkey, self.donor_bonk.key(), BonkPawsError::InvalidBonkATA);
-            require_keys_eq!(ix.accounts.get(2).ok_or(BonkPawsError::InvalidBonkAccount)?.pubkey, self.donor.key(), BonkPawsError::InvalidBonkAccount); // ???
 
-            // Added wSol account checks 
+            // wSol account checks 
             require_keys_eq!(ix.accounts.get(8).ok_or(BonkPawsError::InvalidwSolMint)?.pubkey, self.wsol.key(), BonkPawsError::InvalidwSolMint);
-            require_keys_eq!(ix.accounts.get(6).ok_or(BonkPawsError::InvalidwSolATA)?.pubkey, self.pool_wsol.key(), BonkPawsError::InvalidwSolATA);
+            require_keys_eq!(ix.accounts.get(6).ok_or(BonkPawsError::InvalidwSolATA)?.pubkey, self.donor_wsol.key(), BonkPawsError::InvalidwSolATA);
         } else {
             return Err(BonkPawsError::MissingSwapIx.into());
         }
 
         /* 
         
-        Match Finalize Instruction
-        
-        We also ensure that after swapping on Jupiter, we clean up our 
-        wSOL ATA, sending swapped lamports to the charity address and
-        refunding rent-exempt sats to the donor. 
-        
-        To avoid adding another account for a vault, we simply save the
-        "amount" from the wSOL ATA, close it, sending the entire lamport 
-        balance to the donor's signing keypair, before finally sending 
-        the non-rent except amount from the donor to the charity account.
+            Match Finalize Instruction
+            
+            We also ensure that after swapping on Jupiter, we clean up our 
+            wSOL ATA, sending swapped lamports to the charity address and
+            refunding rent-exempt sats to the donor. 
+            
+            To avoid adding another account for a vault, we simply save the
+            "amount" from the wSOL ATA, close it, sending the entire lamport 
+            balance to the donor's signing keypair, before finally sending 
+            the non-rent except amount from the donor to the charity account.
 
-        We also peform the following checks:
+            We also peform the following checks:
 
-        - Program ID and IX discriminator
-        - SOL account matching
-        - min_lamports_out balance
+            - Program ID and IX discriminator
+            - SOL account matching
+            - min_lamports_out balance
+
         */
 
         // Ensure we have a finalize ix
         if let Ok(ix) = load_instruction_at_checked(current_index + 2, &ixs) {
             // Instruction checks
             require_instruction_eq!(ix, crate::ID, crate::instruction::Finalize::DISCRIMINATOR, BonkPawsError::InvalidInstruction);
-            let finalize_ix = crate::instruction::Finalize::try_from_slice(&ix.data[8..])?;
 
-            require_eq!(min_lamports_out, finalize_ix.min_lamports_out, BonkPawsError::InvalidLamportsBalance);
-
-            // SOL account checks
+            // We check if the money are actually sent to the charity in the end
             require_keys_eq!(ix.accounts.get(1).ok_or(BonkPawsError::InvalidCharityAddress)?.pubkey, charity_key);
         } else {
             return Err(BonkPawsError::MissingFinalizeIx.into());
