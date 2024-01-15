@@ -118,7 +118,19 @@ impl<'info> DonateSol<'info> {
         require!(signing_authority::ID.to_bytes().eq(&signature_ix.data[16..48]), BonkPawsError::SignatureAuthorityMismatch);
 
         // Get the charity ID for later verification
-        // ToDo
+        /// The following fetches the charity key for later varification
+        let mut charity_key_data: [u8;32] = [0u8;32]; 
+        charity_key_data.copy_from_slice(&signature_ix.data[0x70..0x90]);
+        let charity_key = Pubkey::from(charity_key_data);
+
+        /*
+            //The following fetches the charity ID for later varification
+
+            let mut charity_id_data: [u8;32] = [0u8;32]; 
+            charity_id_data.copy_from_slice(&signature_ix.data[0x70..0x90]);
+            let first_eight = <[u8; 8]>::try_from(&charity_id_data[0..8]).unwrap();
+            let charity_id = u64::from_le_bytes(first_eight);
+        */
 
         // Ensure that the Transfer is going to the right charity ID
         //require!()
