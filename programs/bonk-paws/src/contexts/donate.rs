@@ -30,7 +30,7 @@ use crate::{
         SharedAccountsRoute, 
         self
     },
-    constants::{ MATCH_THRESHOLD, signing_authority}, 
+    constants::*, 
     require_discriminator_eq, 
     require_instruction_eq, errors::BonkPawsError,
     state::DonationState
@@ -96,11 +96,22 @@ pub struct Donate<'info> {
 impl<'info> Donate<'info> {        
     pub fn match_burn_and_swap(&mut self, bonk_donation: u64, min_lamports_out: u64) -> Result<()> {
 
-        let mut swap_amount = bonk_donation;
+        // Set our match amount based upon min and max thresholds. Defaults to zero if not met.
+        let matched = bonk_donation.checked_mul((min_lamports_out < MAX_MATCH_THRESHOLD) as u64).unwrap()
+        .checked_mul((min_lamports_out > MIN_MATCH_THRESHOLD) as u64)
+        .ok_or(BonkPawsError::Overflow)?;
+        
+        // Set our burn amount based upon min and max thresholds. Defaults to zero if not met.
+        let burned = bonk_donation.checked_div(100).unwrap().checked_mul((min_lamports_out < MAX_BURN_THRESHOLD) as u64).unwrap()
+        .checked_mul((min_lamports_out > MIN_BURN_THRESHOLD) as u64)
+        .ok_or(BonkPawsError::Overflow)?;
 
-        // Update on the BonkState the bonk_donated amount
-        self.donation_state.bonk_donated = self.donation_state.bonk_donated.checked_add(bonk_donation as u128).unwrap();
+        let swap_amount = bonk_donation.checked_add(matched).ok_or(BonkPawsError::Overflow)?;
 
+        // Update on the BonkState
+        self.donation_state.bonk_donated = self.donation_state.bonk_donated.checked_add(bonk_donation).unwrap();
+        self.donation_state.bonk_matched = self.donation_state.bonk_matched.checked_add(matched).unwrap();
+        self.donation_state.bonk_burned = self.donation_state.bonk_burned.checked_add(burned).unwrap();
         /* 
         
             Match Donation & Burn
@@ -121,14 +132,6 @@ impl<'info> Donate<'info> {
 
         */        
 
-        // Check if the Threshold is met
-        if min_lamports_out >= MATCH_THRESHOLD {
-
-            swap_amount = swap_amount.checked_add(bonk_donation).ok_or(BonkPawsError::InvalidAmount)?;
-
-            // Update on the BonkState the bonk_matched amount (99% of the pool_match)
-            self.donation_state.bonk_matched = self.donation_state.bonk_matched.checked_add(bonk_donation.checked_mul(99).unwrap().checked_div(100).unwrap() as u128).unwrap();
-
             // Transfer Bonk from vault to Donor
             let transfer_accounts = TransferSPL {
                 from: self.authority_bonk.to_account_info(),
@@ -137,7 +140,7 @@ impl<'info> Donate<'info> {
             };
             let transfer_ctx = CpiContext::new(self.token_program.to_account_info(), transfer_accounts);
 
-            transfer_spl(transfer_ctx, bonk_donation)?;
+            transfer_spl(transfer_ctx, matched)?;
 
             // Burn 1% of deposit in Bonk
             let burn_accounts = Burn {
@@ -147,11 +150,7 @@ impl<'info> Donate<'info> {
             };
             let burn_ctx = CpiContext::new(self.token_program.to_account_info(), burn_accounts);
 
-            burn(burn_ctx, bonk_donation.checked_div(100).unwrap())?;
-
-            // Update on the BonkState the bonk_burned amount (1% of the pool_match)
-            self.donation_state.bonk_burned = self.donation_state.bonk_burned.checked_add(bonk_donation.checked_div(100).unwrap() as u128).unwrap();
-        }
+            burn(burn_ctx, burned)?;
 
         /* 
         
@@ -181,7 +180,7 @@ impl<'info> Donate<'info> {
 
         /*
 
-            Pt2 - Verify Donor Address
+            Pt2 - Verify Donor Address [SignatureIx == 0]
 
             [Doc...]Make sure previous IX is an ed25519 signature verifying the donation address
 
@@ -204,7 +203,7 @@ impl<'info> Donate<'info> {
 
         /* 
         
-            Pt3 - Match Jupiter Swap Instruction
+            Pt3 - Match Jupiter Swap Instruction [SwapIx == 2]
             
             Ensure that the next instruction after this one is a swap in the
             Jupiter program. Checks include:
@@ -248,7 +247,7 @@ impl<'info> Donate<'info> {
 
         /* 
         
-            Match Finalize Instruction
+            Match Finalize Instruction - [FinalizeIx == 3]
             
             We also ensure that after swapping on Jupiter, we clean up our 
             wSOL ATA, sending swapped lamports to the charity address and

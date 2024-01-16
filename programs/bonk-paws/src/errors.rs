@@ -2,6 +2,8 @@ use anchor_lang::prelude::*;
 
 #[error_code]
 pub enum BonkPawsError {
+    #[msg("Overflow")]
+    Overflow,
     #[msg("Invalid amount")]
     InvalidAmount,
     #[msg("Swap IX not found")]

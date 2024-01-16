@@ -88,7 +88,6 @@ pub struct MatchSolDonation<'info> {
 
 impl<'info> MatchSolDonation<'info> {        
     pub fn match_sol_donation(&mut self, _seed: u64, bonk_donation: u64) -> Result<()> {
-        
 
         // Burn 1% of deposit in Bonk
         let burn_accounts = Burn {
@@ -100,12 +99,11 @@ impl<'info> MatchSolDonation<'info> {
         let burn_ctx = CpiContext::new(self.token_program.to_account_info(), burn_accounts);
 
         burn(burn_ctx, bonk_donation.checked_div(100).unwrap())?;
-        self.donation_state.bonk_burned = self.donation_state.bonk_burned.checked_add(bonk_donation.checked_div(100).unwrap() as u128).unwrap();
 
         // Updated the BonkState
-        self.donation_state.bonk_donated = self.donation_state.bonk_donated.checked_add(bonk_donation as u128).unwrap();
-        self.donation_state.bonk_matched = self.donation_state.bonk_matched.checked_add(bonk_donation as u128).unwrap();
-
+        self.donation_state.bonk_donated = self.donation_state.bonk_donated.checked_add(bonk_donation).unwrap();
+        self.donation_state.bonk_matched = self.donation_state.bonk_matched.checked_add(bonk_donation).unwrap();
+        self.donation_state.bonk_burned = self.donation_state.bonk_burned.checked_add(bonk_donation.checked_div(100).unwrap()).unwrap();
 
         /* 
         

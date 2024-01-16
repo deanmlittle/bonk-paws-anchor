@@ -2,14 +2,14 @@ use anchor_lang::prelude::*;
 
 #[account]
 pub struct DonationState {
-    pub bonk_burned: u128,
-    pub bonk_donated: u128,
-    pub bonk_matched: u128,
+    pub bonk_burned: u64,
+    pub bonk_donated: u64,
+    pub bonk_matched: u64,
 
 }
 
 impl Space for DonationState {
-    const INIT_SPACE: usize = 8 + 16 + 16 + 16;
+    const INIT_SPACE: usize = 8 + 8 + 8 + 8;
 }
 
 #[account]

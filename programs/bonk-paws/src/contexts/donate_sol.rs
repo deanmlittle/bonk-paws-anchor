@@ -10,7 +10,7 @@ use anchor_lang::{
 };
 
 use crate::{
-    constants::{MATCH_THRESHOLD, signing_authority},
+    constants::*,
     errors::BonkPawsError,
     state::{DonationState, MatchDonation}
 };
@@ -55,7 +55,7 @@ impl<'info> DonateSol<'info> {
         */
 
         // We check that the MatchDonation State is initialized only when the threshold is met
-        require!(sol_donation < MATCH_THRESHOLD && self.match_donation_state.is_some(), BonkPawsError::NotMatchingDonation); // Double check with testa
+        require!(sol_donation < MIN_MATCH_THRESHOLD && self.match_donation_state.is_some(), BonkPawsError::NotMatchingDonation); // Double check with test
 
 
         let transfer_accounts = Transfer {
