@@ -1,3 +1,5 @@
+use std::cmp::min;
+
 use anchor_lang::{
     prelude::*, 
     solana_program::sysvar::{
@@ -97,21 +99,15 @@ impl<'info> Donate<'info> {
     pub fn match_burn_and_swap(&mut self, bonk_donation: u64, min_lamports_out: u64) -> Result<()> {
 
         // Set our match amount based upon min and max thresholds. Defaults to zero if not met.
-        let matched = bonk_donation.checked_mul((min_lamports_out < MAX_MATCH_THRESHOLD) as u64).unwrap()
-        .checked_mul((min_lamports_out > MIN_MATCH_THRESHOLD) as u64)
-        .ok_or(BonkPawsError::Overflow)?;
-        
-        // Set our burn amount based upon min and max thresholds. Defaults to zero if not met.
-        let burned = bonk_donation.checked_div(100).unwrap().checked_mul((min_lamports_out < MAX_BURN_THRESHOLD) as u64).unwrap()
-        .checked_mul((min_lamports_out > MIN_BURN_THRESHOLD) as u64)
-        .ok_or(BonkPawsError::Overflow)?;
-
+        let matched = min(min_lamports_out, MAX_MATCH_THRESHOLD).checked_mul((min_lamports_out > MIN_MATCH_THRESHOLD) as u64).ok_or(BonkPawsError::Overflow)?;
+        let burned = matched.checked_div(100).ok_or(BonkPawsError::Overflow)?;
         let swap_amount = bonk_donation.checked_add(matched).ok_or(BonkPawsError::Overflow)?;
 
         // Update on the BonkState
         self.donation_state.bonk_donated = self.donation_state.bonk_donated.checked_add(bonk_donation).unwrap();
         self.donation_state.bonk_matched = self.donation_state.bonk_matched.checked_add(matched).unwrap();
         self.donation_state.bonk_burned = self.donation_state.bonk_burned.checked_add(burned).unwrap();
+
         /* 
         
             Match Donation & Burn
@@ -132,6 +128,7 @@ impl<'info> Donate<'info> {
 
         */        
 
+        if matched > 0 {
             // Transfer Bonk from vault to Donor
             let transfer_accounts = TransferSPL {
                 from: self.authority_bonk.to_account_info(),
@@ -151,7 +148,8 @@ impl<'info> Donate<'info> {
             let burn_ctx = CpiContext::new(self.token_program.to_account_info(), burn_accounts);
 
             burn(burn_ctx, burned)?;
-
+        }
+        
         /* 
         
             Instruction Introspection

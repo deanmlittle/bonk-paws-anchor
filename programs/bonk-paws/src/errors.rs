@@ -38,6 +38,8 @@ pub enum BonkPawsError {
     InvalidwSolBalance,
     #[msg("Invalid charity address")]
     InvalidCharityAddress,
+    #[msg("Invalid charity Id")]
+    InvalidCharityId,
     #[msg("Invalid lamports balance")]
     InvalidLamportsBalance,
     #[msg("Invalid instruction index")]

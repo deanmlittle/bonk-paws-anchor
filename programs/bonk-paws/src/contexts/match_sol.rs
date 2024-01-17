@@ -95,7 +95,6 @@ impl<'info> MatchSolDonation<'info> {
             from: self.authority_bonk.to_account_info(),
             authority: self.authority.to_account_info()
         };
-
         let burn_ctx = CpiContext::new(self.token_program.to_account_info(), burn_accounts);
 
         burn(burn_ctx, bonk_donation.checked_div(100).unwrap())?;

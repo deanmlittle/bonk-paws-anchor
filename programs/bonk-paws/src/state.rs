@@ -16,8 +16,9 @@ impl Space for DonationState {
 pub struct MatchDonation {
     pub id: u64,
     pub amount: u64,
+    pub seed: u64,
 }
 
 impl Space for MatchDonation {
-    const INIT_SPACE: usize = 8 + 8 + 8;
+    const INIT_SPACE: usize = 8 + 8 + 8 + 8;
 }

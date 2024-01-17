@@ -48,15 +48,10 @@ pub struct DonateSol<'info> {
 impl<'info> DonateSol<'info> {        
     pub fn donate_sol(&mut self, _seed: u64, sol_donation: u64, id: u64) -> Result<()> {
         
-        /*
-        
-        Send the SOL to the charity address and if we need to match create an istance where we Donate -> Redo Docs
-        
-        */
+        /* Send the SOL to the charity address and if we need to match create an istance where we Donate */
 
         // We check that the MatchDonation State is initialized only when the threshold is met
         require!(sol_donation < MIN_MATCH_THRESHOLD && self.match_donation_state.is_some(), BonkPawsError::NotMatchingDonation); // Double check with test
-
 
         let transfer_accounts = Transfer {
             from: self.donor.to_account_info(),
@@ -71,7 +66,8 @@ impl<'info> DonateSol<'info> {
             self.match_donation_state.as_mut().unwrap().set_inner(           
                 MatchDonation {
                     id,
-                    amount: sol_donation
+                    amount: sol_donation,
+                    seed: _seed,
                 }
             );
         }
@@ -84,6 +80,7 @@ impl<'info> DonateSol<'info> {
             enforce atomicity while making a great UX for our users.
 
         */
+
         let ixs = self.instructions.to_account_info();
 
         /*
@@ -123,21 +120,17 @@ impl<'info> DonateSol<'info> {
         charity_key_data.copy_from_slice(&signature_ix.data[0x70..0x90]);
         let charity_key = Pubkey::from(charity_key_data);
 
+        // Ensure that the Transfer is going to the charity address
+        require_keys_eq!(self.charity.key(), charity_key, BonkPawsError::InvalidCharityAddress);
+
+
         //The following fetches the charity ID for later varification
         let mut charity_id_data: [u8;8] = [0u8;8]; 
         charity_id_data.copy_from_slice(&signature_ix.data[0x90..0x98]);
         let charity_id = u64::from_le_bytes(charity_id_data);
 
-        // Ensure that the Transfer is going to the right charity ID
-        //require!()
-
-        // Get charity account key for later verification:
-        let mut charity_key_data: [u8;32] = [0u8;32]; 
-        charity_key_data.copy_from_slice(&signature_ix.data[0x70..0x90]);
-        let charity_key = Pubkey::from(charity_key_data);
-
-        // Ensure that the Transfer is going to the charity address
-        require_keys_eq!(self.charity.key(), charity_key, BonkPawsError::InvalidCharityAddress);
+        // Ensure that the Transfer is going to the ID passed in
+        require_eq!(id, charity_id, BonkPawsError::InvalidCharityId);
         
         Ok(())
     }
