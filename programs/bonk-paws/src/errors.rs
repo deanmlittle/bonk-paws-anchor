@@ -51,4 +51,6 @@ pub enum BonkPawsError {
 
     #[msg("Not enough SOL Donated to Match")]
     NotMatchingDonation,
+    #[msg("Invalid Match Key")]
+    InvalidMatchKey,
 }

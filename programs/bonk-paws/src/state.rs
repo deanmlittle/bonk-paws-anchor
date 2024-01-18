@@ -14,11 +14,12 @@ impl Space for DonationState {
 
 #[account]
 pub struct MatchDonationState {
+    pub id: u64,
     pub donation_amount: u64,
     pub match_key: Pubkey,
     pub seed: u64,
 }
 
 impl Space for MatchDonationState {
-    const INIT_SPACE: usize = 8 + 8 + 8 + 8;
+    const INIT_SPACE: usize = 8 + 8 + 8 + 8 + 8;
 }

@@ -97,30 +97,40 @@ impl<'info> DonateSol<'info> {
         require!(sysvar::instructions::check_id(&signature_ix.program_id), BonkPawsError::ProgramMismatch);
 
         // Ensure a strict instruction header format: 
-        require!([0x01, 0x00, 0x30, 0x00, 0xff, 0xff, 0x10, 0x00, 0xff, 0xff, 0x70, 0x00, 0x40, 0x00, 0xff, 0xff].eq(&signature_ix.data[0..16]), BonkPawsError::SignatureHeaderMismatch);
+        require!([0x01, 0x00, 0x30, 0x00, 0xff, 0xff, 0x10, 0x00, 0xff, 0xff, 0x70, 0x00, 0x48, 0x00, 0xff, 0xff].eq(&signature_ix.data[0..16]), BonkPawsError::SignatureHeaderMismatch);
 
         // Ensure signing authority is correct
         require!(signing_authority::ID.to_bytes().eq(&signature_ix.data[16..48]), BonkPawsError::SignatureAuthorityMismatch);
 
+        // The following fetches the id for usage in the transaction history
+        let mut charity_id_data: [u8;8] = [0u8;8]; 
+        charity_id_data.copy_from_slice(&signature_ix.data[0x70..0x78]);
+        let id = u64::from_le_bytes(charity_id_data);
+
         // The following fetches the charity key for later varification
         let mut donation_key_data: [u8;32] = [0u8;32]; 
-        donation_key_data.copy_from_slice(&signature_ix.data[0x70..0x90]);
+        donation_key_data.copy_from_slice(&signature_ix.data[0x78..0x98]);
         let donation_key = Pubkey::from(donation_key_data);
 
         // Ensure that the Transfer is going to the charity address
         require_keys_eq!(self.charity.key(), donation_key, BonkPawsError::InvalidCharityAddress);
 
-        // @Ascpool: We don't need this but we need to fetch another publickey here; double check this
-
         // The following fetches the charity key for later varification
         let mut match_key_data: [u8;32] = [0u8;32]; 
-        match_key_data.copy_from_slice(&signature_ix.data[0x90..0x110]);
+        match_key_data.copy_from_slice(&signature_ix.data[0x98..0x118]);
         let match_key = Pubkey::from(match_key_data);
+
+        // Ensure that we're not making any mistake:
+        if match_key == Pubkey::default() {
+            require!(self.match_donation_state.is_none(), BonkPawsError::InvalidMatchKey);
+            require!(sol_donation < MIN_MATCH_THRESHOLD, BonkPawsError::InvalidMatchKey);
+        }
 
         // If we have to match later we need to create the MatchDonation State
         if self.match_donation_state.is_some() {
             self.match_donation_state.as_mut().unwrap().set_inner(           
                 MatchDonationState {
+                    id,
                     donation_amount: sol_donation,
                     match_key,
                     seed,
