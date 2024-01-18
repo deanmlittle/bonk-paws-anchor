@@ -2,6 +2,8 @@ use anchor_lang::prelude::*;
 
 #[error_code]
 pub enum BonkPawsError {
+    #[msg("Overflow")]
+    Overflow,
     #[msg("Invalid amount")]
     InvalidAmount,
     #[msg("Swap IX not found")]
@@ -26,12 +28,18 @@ pub enum BonkPawsError {
     InvalidBonkAccount,
     #[msg("Invalid BONK ATA")]
     InvalidBonkATA,
+    #[msg("Invalid wSOL mint address")]
+    InvalidwSolMint,
+    #[msg("Invalid wSOL ATA")]
+    InvalidwSolATA,
     #[msg("Invalid wSOL account")]
     InvalidwSolAccount,
     #[msg("Invalid wSOL balance")]
     InvalidwSolBalance,
     #[msg("Invalid charity address")]
     InvalidCharityAddress,
+    #[msg("Invalid charity Id")]
+    InvalidCharityId,
     #[msg("Invalid lamports balance")]
     InvalidLamportsBalance,
     #[msg("Invalid instruction index")]
@@ -40,4 +48,9 @@ pub enum BonkPawsError {
     SignatureHeaderMismatch,
     #[msg("Signature authority mismatch")]
     SignatureAuthorityMismatch,
+
+    #[msg("Not enough SOL Donated to Match")]
+    NotMatchingDonation,
+    #[msg("Invalid Match Key")]
+    InvalidMatchKey,
 }

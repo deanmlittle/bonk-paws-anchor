@@ -1,7 +1,7 @@
 import * as anchor from "@coral-xyz/anchor";
 import { Program, BN } from "@coral-xyz/anchor";
 import { BonkPaws } from "../target/types/bonk_paws";
-import { ComputeBudgetProgram, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
+import { ComputeBudgetProgram, Keypair, LAMPORTS_PER_SOL, PublicKey, SystemProgram, Transaction, Ed25519Program } from "@solana/web3.js";
 import { ASSOCIATED_PROGRAM_ID, TOKEN_PROGRAM_ID, associatedAddress } from "@coral-xyz/anchor/dist/cjs/utils/token";
 import { associated } from "@coral-xyz/anchor/dist/cjs/utils/pubkey";
 import { getOrCreateAssociatedTokenAccount } from "@solana/spl-token";
