@@ -37,7 +37,7 @@ use crate::{
 
 
 #[derive(Accounts)]
-pub struct Finalize<'info> {
+pub struct FinalizeDonation<'info> {
     #[account(mut)]
     donor: Signer<'info>,
     charity: SystemAccount<'info>,
@@ -60,8 +60,8 @@ pub struct Finalize<'info> {
     system_program: Program<'info, System>
 }
 
-impl<'info> Finalize<'info> {        
-    pub fn finalize(&self) -> Result<()> {
+impl<'info> FinalizeDonation<'info> {        
+    pub fn finalize_donation(&self) -> Result<()> {
         
         /*
         
@@ -80,16 +80,12 @@ impl<'info> Finalize<'info> {
         let ixs = self.instructions.to_account_info();
 
         let current_index = load_current_index_checked(&ixs)? as usize;
-        require_gte!(current_index, 3, BonkPawsError::InvalidInstructionIndex);
+        require_gte!(current_index, 2, BonkPawsError::InvalidInstructionIndex);
 
         if let Ok(ix) = load_instruction_at_checked(current_index - 2, &ixs) {
             // Instruction checks
-            require_instruction_eq!(ix, crate::ID, crate::instruction::Donate::DISCRIMINATOR, BonkPawsError::InvalidInstruction);
-        } else if let Ok(ix) = load_instruction_at_checked(current_index - 2, &ixs) { // Double check this
-            // Instruction checks
-            require_instruction_eq!(ix, crate::ID, crate::instruction::MatchSol::DISCRIMINATOR, BonkPawsError::InvalidInstruction);
-        } 
-        else {
+            require_instruction_eq!(ix, crate::ID, crate::instruction::MatchDonation::DISCRIMINATOR, BonkPawsError::InvalidInstruction);
+        } else {
             return Err(BonkPawsError::MissingDonateIx.into());
         }
 

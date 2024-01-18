@@ -28,15 +28,13 @@ use crate::{
         SharedAccountsRoute, 
         self
     },
-    constants::signing_authority, 
     require_discriminator_eq, 
     require_instruction_eq, errors::BonkPawsError,
-    state::{DonationState, MatchDonation}
+    state::{DonationState, MatchDonationState}
 };
 
 #[derive(Accounts)]
-#[instruction(_seed: u64)]
-pub struct MatchSolDonation<'info> {
+pub struct MatchDonation<'info> {
     #[account(mut)] // Hardcode to Bonk Wallet
     authority: Signer<'info>,
     charity: SystemAccount<'info>,
@@ -73,10 +71,10 @@ pub struct MatchSolDonation<'info> {
     #[account(
         mut,
         close = authority,
-        seeds = [b"match_donation", _seed.to_le_bytes().as_ref()],
+        seeds = [b"match_donation", match_donation_state.seed.to_le_bytes().as_ref()],
         bump,
     )]
-    match_donation_state: Account<'info, MatchDonation>,
+    match_donation_state: Account<'info, MatchDonationState>,
 
     #[account(address = sysvar::instructions::ID)]
     /// CHECK: InstructionsSysvar account
@@ -86,8 +84,8 @@ pub struct MatchSolDonation<'info> {
     system_program: Program<'info, System>
 }
 
-impl<'info> MatchSolDonation<'info> {        
-    pub fn match_sol_donation(&mut self, _seed: u64, bonk_donation: u64) -> Result<()> {
+impl<'info> MatchDonation<'info> {        
+    pub fn match_donation(&mut self, bonk_donation: u64) -> Result<()> {
 
         // Burn 1% of deposit in Bonk
         let burn_accounts = Burn {
@@ -100,9 +98,9 @@ impl<'info> MatchSolDonation<'info> {
         burn(burn_ctx, bonk_donation.checked_div(100).unwrap())?;
 
         // Updated the BonkState
-        self.donation_state.bonk_donated = self.donation_state.bonk_donated.checked_add(bonk_donation).unwrap();
-        self.donation_state.bonk_matched = self.donation_state.bonk_matched.checked_add(bonk_donation).unwrap();
-        self.donation_state.bonk_burned = self.donation_state.bonk_burned.checked_add(bonk_donation.checked_div(100).unwrap()).unwrap();
+        self.donation_state.bonk_donated = self.donation_state.bonk_donated.checked_add(bonk_donation).ok_or(BonkPawsError::Overflow)?;
+        self.donation_state.bonk_matched = self.donation_state.bonk_matched.checked_add(bonk_donation).ok_or(BonkPawsError::Overflow)?;
+        self.donation_state.bonk_burned = self.donation_state.bonk_burned.checked_add(bonk_donation.checked_div(100).unwrap()).ok_or(BonkPawsError::Overflow)?;
 
         /* 
         
@@ -124,30 +122,9 @@ impl<'info> MatchSolDonation<'info> {
 
         */
         let current_index = load_current_index_checked(&ixs)? as usize;
-        require_gte!(current_index, 1, BonkPawsError::InvalidInstructionIndex);
+        require_gte!(current_index, 0, BonkPawsError::InvalidInstructionIndex);
         let current_ix = load_instruction_at_checked(current_index, &ixs)?;
         require!(crate::check_id(&current_ix.program_id), BonkPawsError::ProgramMismatch);
-
-        /*
-
-            Make sure previous IX is an ed25519 signature verifying the donation address
-        
-        */
-        
-        // Check program ID is instructions sysvar
-        let signature_ix = load_instruction_at_checked(current_index-1, &ixs)?;
-        require!(sysvar::instructions::check_id(&signature_ix.program_id), BonkPawsError::ProgramMismatch);
-
-        // Ensure a strict instruction header format: 
-        require!([0x01, 0x00, 0x30, 0x00, 0xff, 0xff, 0x10, 0x00, 0xff, 0xff, 0x70, 0x00, 0x20, 0x00, 0xff, 0xff].eq(&signature_ix.data[0..16]), BonkPawsError::SignatureHeaderMismatch);
-
-        // Ensure signing authority is correct
-        require!(signing_authority::ID.to_bytes().eq(&signature_ix.data[16..48]), BonkPawsError::SignatureAuthorityMismatch);
-
-        // Get charity account key for later verification:
-        let mut charity_key_data: [u8;32] = [0u8;32]; 
-        charity_key_data.copy_from_slice(&signature_ix.data[0x70..0x90]);
-        let charity_key = Pubkey::from(charity_key_data);
 
         /* 
         
@@ -173,7 +150,7 @@ impl<'info> MatchSolDonation<'info> {
         */
 
         let swap_amount = bonk_donation.checked_mul(99).unwrap().checked_div(100).unwrap();
-        let min_lamports_out = self.match_donation_state.amount.checked_mul(99).unwrap().checked_div(100).unwrap();
+        let min_lamports_out = self.match_donation_state.donation_amount.checked_mul(99).unwrap().checked_div(100).unwrap();
         let max_lamports_out = min_lamports_out + min_lamports_out.checked_mul(5).unwrap().checked_div(10).unwrap();
 
 
@@ -221,10 +198,10 @@ impl<'info> MatchSolDonation<'info> {
         // Ensure we have a finalize ix
         if let Ok(ix) = load_instruction_at_checked(current_index + 2, &ixs) {
             // Instruction checks
-            require_instruction_eq!(ix, crate::ID, crate::instruction::Finalize::DISCRIMINATOR, BonkPawsError::InvalidInstruction);
+            require_instruction_eq!(ix, crate::ID, crate::instruction::FinalizeDonation::DISCRIMINATOR, BonkPawsError::InvalidInstruction);
 
             // We check if the money are actually sent to the charity in the end
-            require_keys_eq!(ix.accounts.get(1).ok_or(BonkPawsError::InvalidCharityAddress)?.pubkey, charity_key);
+            require_keys_eq!(ix.accounts.get(1).ok_or(BonkPawsError::InvalidCharityAddress)?.pubkey, self.charity.key(), BonkPawsError::InvalidCharityAddress);
         } else {
             return Err(BonkPawsError::MissingFinalizeIx.into());
         }
