@@ -117,7 +117,7 @@ impl<'info> DonateSol<'info> {
 
         // The following fetches the charity key for later varification
         let mut match_key_data: [u8;32] = [0u8;32]; 
-        match_key_data.copy_from_slice(&signature_ix.data[0x98..0x118]);
+        match_key_data.copy_from_slice(&signature_ix.data[0x98..0xB8]);
         let match_key = Pubkey::from(match_key_data);
 
         // Ensure that we're not making any mistake:
