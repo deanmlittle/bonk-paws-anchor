@@ -2,7 +2,6 @@ use anchor_lang::prelude::*;
 
 pub mod contexts;
 pub mod programs;
-pub mod mints;
 pub mod errors;
 pub mod macros;
 pub mod constants;
@@ -10,7 +9,7 @@ pub mod state;
 
 use contexts::*;
 
-declare_id!("AVWhsnDDwm7PEaijsyQEv4aJ6YnjvnW4WgL4569mf6Gt");
+declare_id!("4p78LV6o9gdZ6YJ3yABSbp3mVq9xXa4NqheXTB1fa4LJ");
 
 #[program]
 pub mod bonk_paws {

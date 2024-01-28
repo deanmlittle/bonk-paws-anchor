@@ -21,5 +21,16 @@ pub struct MatchDonationState {
 }
 
 impl Space for MatchDonationState {
-    const INIT_SPACE: usize = 8 + 8 + 8 + 8 + 8;
+    const INIT_SPACE: usize = 8 + 8 + 8 + 32 + 8;
+}
+
+#[account]
+pub struct DonationHistory {
+    pub donor: Pubkey,
+    pub id: u64,
+    pub donation_amount: u64,
+}
+
+impl Space for DonationHistory {
+    const INIT_SPACE: usize = 8 + 32 + 8 + 8;
 }

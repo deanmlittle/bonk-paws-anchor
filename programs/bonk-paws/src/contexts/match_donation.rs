@@ -22,8 +22,8 @@ use anchor_spl::{
 };
 
 use crate::{
-    mints::bonk, 
-    mints::wsol, 
+    constants::bonk, 
+    constants::wsol, 
     programs::jupiter::{
         SharedAccountsRoute, 
         self
@@ -35,7 +35,7 @@ use crate::{
 
 #[derive(Accounts)]
 pub struct MatchDonation<'info> {
-    #[account(mut)] // Hardcode to Bonk Wallet
+    #[account(mut)]
     authority: Signer<'info>,
     charity: SystemAccount<'info>,
 
@@ -149,10 +149,9 @@ impl<'info> MatchDonation<'info> {
 
         */
 
-        let swap_amount = bonk_donation.checked_mul(99).unwrap().checked_div(100).unwrap();
-        let min_lamports_out = self.match_donation_state.donation_amount.checked_mul(99).unwrap().checked_div(100).unwrap();
+        let swap_amount = bonk_donation;
+        let min_lamports_out = self.match_donation_state.donation_amount;
         let max_lamports_out = min_lamports_out + min_lamports_out.checked_mul(5).unwrap().checked_div(10).unwrap();
-
 
         if let Ok(ix) = load_instruction_at_checked(current_index + 1, &ixs) {
             // Instruction checks
@@ -161,7 +160,7 @@ impl<'info> MatchDonation<'info> {
             require_eq!(shared_account_route_ix.in_amount, swap_amount, BonkPawsError::InvalidAmount);
             require_eq!(shared_account_route_ix.slippage_bps, 50, BonkPawsError::InvalidSlippage);
             require_gte!(shared_account_route_ix.route_plan.len(), 1, BonkPawsError::InvalidRoute);
-            require!(shared_account_route_ix.quoted_out_amount > min_lamports_out && shared_account_route_ix.quoted_out_amount < max_lamports_out, BonkPawsError::InvalidSolanaAmount);
+            require!(shared_account_route_ix.quoted_out_amount.checked_mul(100_000).unwrap() >= min_lamports_out && shared_account_route_ix.quoted_out_amount < max_lamports_out, BonkPawsError::InvalidSolanaAmount);
 
             // BONK account checks
             require_keys_eq!(ix.accounts.get(7).ok_or(BonkPawsError::InvalidBonkMint)?.pubkey, self.bonk.key(), BonkPawsError::InvalidBonkMint);

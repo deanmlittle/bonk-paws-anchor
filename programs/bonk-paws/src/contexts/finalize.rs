@@ -26,7 +26,7 @@ use anchor_spl::{
 };
 
 use crate::{
-    mints::wsol, 
+    constants::wsol, 
     programs::jupiter::{
         SharedAccountsRoute, 
         self
@@ -40,6 +40,7 @@ use crate::{
 pub struct FinalizeDonation<'info> {
     #[account(mut)]
     donor: Signer<'info>,
+    #[account(mut)]
     charity: SystemAccount<'info>,
     #[account(
         address = wsol::ID
@@ -94,7 +95,7 @@ impl<'info> FinalizeDonation<'info> {
         if let Ok(ix) = load_instruction_at_checked(current_index - 1, &ixs) {
             require_instruction_eq!(ix, jupiter::ID, SharedAccountsRoute::DISCRIMINATOR, BonkPawsError::InvalidInstruction);
             let shared_account_route_ix = SharedAccountsRoute::try_from_slice(&ix.data[8..])?;
-            donation_amount = shared_account_route_ix.quoted_out_amount;
+            donation_amount = shared_account_route_ix.quoted_out_amount.checked_mul(100_000).unwrap();
         } else {
             return Err(BonkPawsError::MissingDonateIx.into());
         }

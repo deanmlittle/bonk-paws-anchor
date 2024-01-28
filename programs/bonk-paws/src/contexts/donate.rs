@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use anchor_lang::{
     prelude::*, 
     solana_program::sysvar::{
@@ -5,14 +7,15 @@ use anchor_lang::{
         instructions::{
             load_current_index_checked, 
             load_instruction_at_checked
-        }},
+        }
+    },
     system_program::{Transfer, transfer},
 };
 
 use crate::{
     constants::*,
     errors::BonkPawsError,
-    state::{DonationState, MatchDonationState}
+    state::{DonationState, MatchDonationState, DonationHistory}
 };
 
 #[derive(Accounts)]
@@ -20,6 +23,7 @@ use crate::{
 pub struct DonateSol<'info> {
     #[account(mut)]
     donor: Signer<'info>,
+    #[account(mut)]
     charity: SystemAccount<'info>,
 
     #[account(
@@ -38,6 +42,14 @@ pub struct DonateSol<'info> {
         space = MatchDonationState::INIT_SPACE
     )]
     match_donation_state: Option<Account<'info, MatchDonationState>>,
+    #[account(
+        init, 
+        payer = donor,
+        seeds = [b"donation_history", seed.to_le_bytes().as_ref(), donor.key.as_ref()],
+        bump,
+        space = DonationHistory::INIT_SPACE
+    )]
+    donation_history: Account<'info, DonationHistory>,
 
     #[account(address = sysvar::instructions::ID)]
     /// CHECK: InstructionsSysvar account
@@ -49,7 +61,11 @@ impl<'info> DonateSol<'info> {
     pub fn donate_sol(&mut self, seed: u64, sol_donation: u64) -> Result<()> {
         
         // We check that the MatchDonation State is initialized only when the threshold is met
-        require!(sol_donation < MIN_MATCH_THRESHOLD && self.match_donation_state.is_some(), BonkPawsError::NotMatchingDonation); // Double check with test
+        if sol_donation < MIN_MATCH_THRESHOLD {
+            require!(self.match_donation_state.is_none(), BonkPawsError::NotMatchingDonation);
+        } else {
+            require!(self.match_donation_state.is_some(), BonkPawsError::NotMatchingDonation);
+        }
 
         // Send the SOL to the charity address
         let transfer_accounts = Transfer {
@@ -94,7 +110,8 @@ impl<'info> DonateSol<'info> {
         
         // Check program ID is instructions sysvar
         let signature_ix = load_instruction_at_checked(current_index-1, &ixs)?;
-        require!(sysvar::instructions::check_id(&signature_ix.program_id), BonkPawsError::ProgramMismatch);
+        //require!(sysvar::instructions::check_id(&signature_ix.program_id), BonkPawsError::ProgramMismatch);
+        require_eq!(Pubkey::from_str("Ed25519SigVerify111111111111111111111111111").unwrap(), signature_ix.program_id, BonkPawsError::ProgramMismatch);  
 
         // Ensure a strict instruction header format: 
         require!([0x01, 0x00, 0x30, 0x00, 0xff, 0xff, 0x10, 0x00, 0xff, 0xff, 0x70, 0x00, 0x48, 0x00, 0xff, 0xff].eq(&signature_ix.data[0..16]), BonkPawsError::SignatureHeaderMismatch);
@@ -136,8 +153,17 @@ impl<'info> DonateSol<'info> {
                     seed,
                 }
             );
-    }
-        
+        }
+
+        // Create the DonationHistory State
+        self.donation_history.set_inner(
+            DonationHistory {
+                donor: self.donor.key(),
+                id,
+                donation_amount: sol_donation,
+            }
+        );
+
         Ok(())
     }
 }
