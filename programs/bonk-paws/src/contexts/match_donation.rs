@@ -19,7 +19,8 @@ use anchor_spl::{
 
 use crate::{
     constants::bonk, 
-    constants::wsol, 
+    constants::wsol,
+    constants::signing_authority,
     programs::jupiter::{
         SharedAccountsRoute, 
         self
@@ -31,7 +32,7 @@ use crate::{
 
 #[derive(Accounts)]
 pub struct MatchDonation<'info> {
-    #[account(mut)]
+    #[account(mut, address = signing_authority::ID)]
     signer: Signer<'info>,
 
     #[account(
