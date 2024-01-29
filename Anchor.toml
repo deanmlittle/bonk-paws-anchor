@@ -1,18 +1,18 @@
 [toolchain]
 
 [features]
-seeds = false
+seeds = true
 skip-lint = false
 
-[programs.localnet]
-bonk_paws = "AVWhsnDDwm7PEaijsyQEv4aJ6YnjvnW4WgL4569mf6Gt"
+[programs.mainnet]
+bonk_paws = "4p78LV6o9gdZ6YJ3yABSbp3mVq9xXa4NqheXTB1fa4LJ"
 
 [registry]
 url = "https://api.apr.dev"
 
 [provider]
-cluster = "Localnet"
-wallet = "/Users/elon/.config/solana/id.json"
+cluster = "mainnet"
+wallet = "/Users/leo/.config/solana/mainnet.json"
 
 [scripts]
 test = "yarn run ts-mocha -p ./tsconfig.json -t 1000000 tests/**/*.ts"
