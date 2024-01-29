@@ -143,7 +143,6 @@ impl<'info> MatchDonation<'info> {
             require_instruction_eq!(ix, jupiter::ID, SharedAccountsRoute::DISCRIMINATOR, BonkPawsError::InvalidInstruction);
             let shared_account_route_ix = SharedAccountsRoute::try_from_slice(&ix.data[8..])?;
             require_eq!(shared_account_route_ix.slippage_bps, 50, BonkPawsError::InvalidSlippage);
-            require_gte!(shared_account_route_ix.route_plan.len(), 1, BonkPawsError::InvalidRoute);
             require_eq!(shared_account_route_ix.quoted_out_amount.checked_mul(100_000).unwrap(), self.match_donation_state.donation_amount, BonkPawsError::InvalidSolanaAmount);
 
             // BONK account checks
