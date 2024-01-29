@@ -42,6 +42,7 @@ pub struct FinalizeDonation<'info> {
     donor: Signer<'info>,
     #[account(mut)]
     charity: SystemAccount<'info>,
+
     #[account(
         address = wsol::ID
     )]
@@ -139,10 +140,7 @@ impl<'info> FinalizeDonation<'info> {
             to: self.charity.to_account_info()
         };
 
-        let transfer_ctx = CpiContext::new(
-            self.system_program.to_account_info(),
-            transfer_accounts
-        );
+        let transfer_ctx = CpiContext::new(self.system_program.to_account_info(), transfer_accounts);
 
         transfer(transfer_ctx, donation_amount)?;
 
