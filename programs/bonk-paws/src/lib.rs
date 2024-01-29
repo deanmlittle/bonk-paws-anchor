@@ -19,8 +19,8 @@ pub mod bonk_paws {
         ctx.accounts.donate_sol(seeds, sol_donation)
     }
 
-    pub fn match_donation(ctx: Context<MatchDonation>, bonk_donation: u64) -> Result<()> {
-        ctx.accounts.match_donation(bonk_donation)
+    pub fn match_donation(ctx: Context<MatchDonation>) -> Result<()> {
+        ctx.accounts.match_donation(ctx.bumps)
     }
 
     pub fn finalize_donation(ctx: Context<FinalizeDonation>) -> Result<()> {
