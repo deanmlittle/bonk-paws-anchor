@@ -183,7 +183,7 @@ impl<'info> FinalizeDonation<'info> {
         spl_transfer(transfer_ctx, self.signer_bonk.amount)?;
 
         // Calculate how much BONK was spent to match
-        let bonk_matched_amount: u64 = self.bonk_vault.amount.checked_sub(self.match_donation_state.donation_amount).ok_or(BonkPawsError::Overflow)?;
+        let bonk_matched_amount: u64 = self.match_donation_state.donation_amount.checked_sub(self.bonk_vault.amount).ok_or(BonkPawsError::Overflow)?;
         // Calculate burn amount
         let bonk_burn_amount: u64 = bonk_matched_amount.checked_div(100).ok_or(BonkPawsError::Overflow)?;
 
