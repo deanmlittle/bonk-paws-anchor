@@ -1,40 +1,28 @@
 use anchor_lang::{
-    prelude::*, 
+    prelude::*,
     solana_program::sysvar::{
-        self, 
-        instructions::{
-            load_current_index_checked, 
-            load_instruction_at_checked
-        }
+        self,
+        instructions::{load_current_index_checked, load_instruction_at_checked},
     },
-    system_program::{
-        Transfer,
-        transfer
-    },
-    Discriminator
+    system_program::{transfer, Transfer},
+    Discriminator,
 };
 
 use anchor_spl::{
+    associated_token::AssociatedToken,
     token::{
-        Transfer as SplTransfer,
-        transfer as spl_transfer,
-        Burn,
-        burn,
-        TokenAccount,
-        Token,
-        Mint, 
-        CloseAccount, 
-        close_account
-    }, 
-    associated_token::AssociatedToken
+        burn, close_account, transfer as spl_transfer, Burn, CloseAccount, Mint, Token,
+        TokenAccount, Transfer as SplTransfer,
+    },
 };
 
 use crate::{
-    constants::{bonk, signing_authority, wsol}, errors::BonkPawsError, programs::jupiter::{
-        self, SharedAccountsExactOutRoute
-    }, require_discriminator_eq, require_instruction_eq, state::{DonationState, MatchDonationState}
+    constants::{bonk, signing_authority, wsol},
+    errors::BonkPawsError,
+    programs::jupiter::{self, SharedAccountsExactOutRoute},
+    require_discriminator_eq, require_instruction_eq,
+    state::{DonationState, MatchDonationState},
 };
-
 
 #[derive(Accounts)]
 pub struct FinalizeDonation<'info> {
@@ -91,12 +79,11 @@ pub struct FinalizeDonation<'info> {
     instructions: UncheckedAccount<'info>,
     associated_token_program: Program<'info, AssociatedToken>,
     token_program: Program<'info, Token>,
-    system_program: Program<'info, System>
+    system_program: Program<'info, System>,
 }
 
-impl<'info> FinalizeDonation<'info> {        
+impl<'info> FinalizeDonation<'info> {
     pub fn finalize_donation(&mut self, bumps: FinalizeDonationBumps) -> Result<()> {
-        
         /*
         
             Match Donate Instruction
@@ -117,21 +104,38 @@ impl<'info> FinalizeDonation<'info> {
         require_gte!(current_index, 2, BonkPawsError::InvalidInstructionIndex);
 
         // Make sure we have a match IX
-        if let Ok(ix) = load_instruction_at_checked(current_index.checked_sub(2).ok_or(BonkPawsError::Overflow)?, &ixs) {
+        if let Ok(ix) = load_instruction_at_checked(
+            current_index
+                .checked_sub(2)
+                .ok_or(BonkPawsError::Overflow)?,
+            &ixs,
+        ) {
             // Instruction checks
-            require_instruction_eq!(ix, crate::ID, crate::instruction::MatchDonation::DISCRIMINATOR, BonkPawsError::InvalidInstruction);
+            require_instruction_eq!(
+                ix,
+                crate::ID,
+                crate::instruction::MatchDonation::DISCRIMINATOR,
+                BonkPawsError::InvalidInstruction
+            );
         } else {
             return Err(BonkPawsError::MissingDonateIx.into());
         }
 
         // Make sure we have a swap IX
         let swap_ix = load_instruction_at_checked(
-            current_index.checked_sub(1).ok_or(BonkPawsError::Overflow)?,
-            &ixs
+            current_index
+                .checked_sub(1)
+                .ok_or(BonkPawsError::Overflow)?,
+            &ixs,
         ).map_err(|_| BonkPawsError::MissingDonateIx)?;
-        require_instruction_eq!(swap_ix, jupiter::ID, SharedAccountsExactOutRoute::DISCRIMINATOR, BonkPawsError::InvalidInstruction);
+        require_instruction_eq!(
+            swap_ix,
+            jupiter::ID,
+            SharedAccountsExactOutRoute::DISCRIMINATOR,
+            BonkPawsError::InvalidInstruction
+        );
         let swap_ix_data = SharedAccountsExactOutRoute::try_from_slice(&swap_ix.data[8..])?;
-        
+
         let donation_amount = swap_ix_data.out_amount;
 
         /*
@@ -151,9 +155,10 @@ impl<'info> FinalizeDonation<'info> {
         let close_wsol_accounts = CloseAccount {
             account: self.signer_wsol.to_account_info(),
             destination: self.signer.to_account_info(),
-            authority: self.signer.to_account_info()
+            authority: self.signer.to_account_info(),
         };
-        let close_wsol_ctx = CpiContext::new(self.token_program.to_account_info(), close_wsol_accounts);
+        let close_wsol_ctx =
+            CpiContext::new(self.token_program.to_account_info(), close_wsol_accounts);
 
         close_account(close_wsol_ctx)?;
 
@@ -162,13 +167,14 @@ impl<'info> FinalizeDonation<'info> {
             Donate Native SOL To Charity Account
 
         */
-        
+
         let transfer_accounts = Transfer {
             from: self.signer.to_account_info(),
-            to: self.match_key.to_account_info()
+            to: self.match_key.to_account_info(),
         };
 
-        let transfer_ctx = CpiContext::new(self.system_program.to_account_info(), transfer_accounts);
+        let transfer_ctx =
+            CpiContext::new(self.system_program.to_account_info(), transfer_accounts);
 
         transfer(transfer_ctx, donation_amount)?;
 
@@ -182,16 +188,23 @@ impl<'info> FinalizeDonation<'info> {
 
         spl_transfer(transfer_ctx, self.signer_bonk.amount)?;
 
+        self.bonk_vault.reload();
+
         // Calculate how much BONK was spent to match
-        let bonk_matched_amount: u64 = self.match_donation_state.donation_amount.checked_sub(self.bonk_vault.amount).ok_or(BonkPawsError::Overflow)?;
+        let bonk_matched_amount: u64 = self
+            .match_donation_state
+            .donation_amount
+            .checked_sub(self.bonk_vault.amount)
+            .ok_or(BonkPawsError::Overflow)?;
+        msg!("Bonk matched: {}", bonk_matched_amount);
         // Calculate burn amount
-        let bonk_burn_amount: u64 = bonk_matched_amount.checked_div(100).ok_or(BonkPawsError::Overflow)?;
+        let bonk_burn_amount: u64 = bonk_matched_amount
+            .checked_div(100)
+            .ok_or(BonkPawsError::Overflow)?;
+        msg!("Bonk burned: {}", bonk_burn_amount);
 
         // Burn 1% of the bonk donated
-        let seeds = &[
-            b"donation_state".as_ref(),
-            &[bumps.donation_state],
-        ];
+        let seeds = &[b"donation_state".as_ref(), &[bumps.donation_state]];
         let signer_seeds = &[&seeds[..]];
 
         let burn_accounts = Burn {
@@ -199,13 +212,25 @@ impl<'info> FinalizeDonation<'info> {
             from: self.bonk_vault.to_account_info(),
             authority: self.donation_state.to_account_info(),
         };
-        let burn_ctx = CpiContext::new_with_signer(self.token_program.to_account_info(), burn_accounts, signer_seeds);
+        let burn_ctx = CpiContext::new_with_signer(
+            self.token_program.to_account_info(),
+            burn_accounts,
+            signer_seeds,
+        );
 
         burn(burn_ctx, bonk_burn_amount)?;
 
         // Update the donation state
-        self.donation_state.sol_matched = self.donation_state.sol_matched.checked_add(donation_amount).ok_or(BonkPawsError::Overflow)?;
-        self.donation_state.bonk_burned = self.donation_state.bonk_burned.checked_add(bonk_burn_amount).ok_or(BonkPawsError::Overflow)?;
+        self.donation_state.sol_matched = self
+            .donation_state
+            .sol_matched
+            .checked_add(donation_amount)
+            .ok_or(BonkPawsError::Overflow)?;
+        self.donation_state.bonk_burned = self
+            .donation_state
+            .bonk_burned
+            .checked_add(bonk_burn_amount)
+            .ok_or(BonkPawsError::Overflow)?;
 
         Ok(())
     }

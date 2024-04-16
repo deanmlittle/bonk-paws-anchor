@@ -145,7 +145,6 @@ impl<'info> MatchDonation<'info> {
 
         // Save sum of BONK vault plus user BONK ATA balance in MatchState PDA for cost comparison in finalization
         self.match_donation_state.donation_amount = self.bonk_vault.amount.checked_add(self.signer_bonk.amount).ok_or(BonkPawsError::Overflow)?;
-
         //  Send maximum donation amount after slippage to user's ATA
         let max_donation_amount: u64 = swap_ix_data.quoted_in_amount.checked_mul(10050).ok_or(BonkPawsError::Overflow)?.checked_div(10000).ok_or(BonkPawsError::Overflow)?;
 
