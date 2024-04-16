@@ -1,5 +1,3 @@
-use std::str::FromStr;
-
 use anchor_lang::{
     prelude::*, 
     solana_program::sysvar::{
@@ -25,7 +23,6 @@ pub struct DonateSol<'info> {
     donor: Signer<'info>,
     #[account(mut)]
     charity: SystemAccount<'info>,
-
     #[account(
         init_if_needed,
         payer = donor,
@@ -50,7 +47,6 @@ pub struct DonateSol<'info> {
         space = DonationHistory::INIT_SPACE
     )]
     donation_history: Account<'info, DonationHistory>,
-
     #[account(address = sysvar::instructions::ID)]
     /// CHECK: InstructionsSysvar account
     instructions: UncheckedAccount<'info>,
@@ -76,17 +72,6 @@ impl<'info> DonateSol<'info> {
 
         transfer(transfer_cpi, sol_donation)?;
 
-        /* 
-        
-            Instruction Introspection
-
-            This is the primary means by which we secure our program,
-            enforce atomicity while making a great UX for our users.
-
-        */
-
-        let ixs = self.instructions.to_account_info();
-
         /*
 
             Disable CPIs
@@ -97,6 +82,7 @@ impl<'info> DonateSol<'info> {
 
         */
 
+        let ixs = self.instructions.to_account_info();
         let current_index = load_current_index_checked(&ixs)? as usize;
         require_gte!(current_index, 1, BonkPawsError::InvalidInstructionIndex);
         let current_ix = load_instruction_at_checked(current_index, &ixs)?;
@@ -109,9 +95,8 @@ impl<'info> DonateSol<'info> {
         */
         
         // Check program ID is instructions sysvar
-        let signature_ix = load_instruction_at_checked(current_index-1, &ixs)?;
-        //require!(sysvar::instructions::check_id(&signature_ix.program_id), BonkPawsError::ProgramMismatch);
-        require_eq!(Pubkey::from_str("Ed25519SigVerify111111111111111111111111111").unwrap(), signature_ix.program_id, BonkPawsError::ProgramMismatch);  
+        let signature_ix = load_instruction_at_checked(current_index.checked_sub(1).ok_or(BonkPawsError::Overflow)?, &ixs)?;
+        require_keys_eq!(ed25519program::ID, signature_ix.program_id, BonkPawsError::ProgramMismatch);  
 
         // Ensure a strict instruction header format: 
         require!([0x01, 0x00, 0x30, 0x00, 0xff, 0xff, 0x10, 0x00, 0xff, 0xff, 0x70, 0x00, 0x48, 0x00, 0xff, 0xff].eq(&signature_ix.data[0..16]), BonkPawsError::SignatureHeaderMismatch);
@@ -132,7 +117,7 @@ impl<'info> DonateSol<'info> {
         // Ensure that the Transfer is going to the charity address
         require_keys_eq!(self.charity.key(), donation_key, BonkPawsError::InvalidCharityAddress);
 
-        // The following fetches the charity key for later varification
+        // The following fetches the charity key for later verification
         let mut match_key_data: [u8;32] = [0u8;32]; 
         match_key_data.copy_from_slice(&signature_ix.data[0x98..0xB8]);
         let match_key = Pubkey::from(match_key_data);
@@ -154,6 +139,9 @@ impl<'info> DonateSol<'info> {
                 }
             );
         }
+        
+        // Increment the amount of SOL donated by donors
+        self.donation_state.sol_donated = self.donation_state.sol_donated.checked_add(sol_donation).ok_or(BonkPawsError::Overflow)?; 
 
         // Create the DonationHistory State
         self.donation_history.set_inner(
@@ -161,6 +149,7 @@ impl<'info> DonateSol<'info> {
                 donor: self.donor.key(),
                 id,
                 donation_amount: sol_donation,
+                timestamp: Clock::get()?.unix_timestamp
             }
         );
 

@@ -8,7 +8,7 @@ use anchor_lang::declare_id;
 
 pub mod signing_authority {
     use super::*;
-    declare_id!("BDEECMrE5dv4cc5na6Fi8sNkfzYxckd6ZjsuEzp7hXnJ");
+    declare_id!("bfp1sHRTCvq7geo1hkBuaYbiFdEhsfeoidqimJDuSEy");
 }
 
 pub mod bonk {
@@ -19,4 +19,9 @@ pub mod bonk {
 pub mod wsol {
     use super::*;
     declare_id!("So11111111111111111111111111111111111111112");
+}
+
+pub mod ed25519program {
+    use super::*;
+    declare_id!("Ed25519SigVerify111111111111111111111111111");
 }

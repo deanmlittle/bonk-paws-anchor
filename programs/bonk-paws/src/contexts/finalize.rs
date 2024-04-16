@@ -10,14 +10,18 @@ use anchor_lang::{
     system_program::{
         Transfer,
         transfer
-    }, 
+    },
     Discriminator
 };
 
 use anchor_spl::{
     token::{
+        Transfer as SplTransfer,
+        transfer as spl_transfer,
+        Burn,
+        burn,
         TokenAccount,
-        Token, 
+        Token,
         Mint, 
         CloseAccount, 
         close_account
@@ -26,23 +30,38 @@ use anchor_spl::{
 };
 
 use crate::{
-    constants::wsol, 
-    programs::jupiter::{
-        SharedAccountsRoute, 
-        self
-    },
-    require_discriminator_eq, 
-    require_instruction_eq, errors::BonkPawsError,
+    constants::{bonk, signing_authority, wsol}, errors::BonkPawsError, programs::jupiter::{
+        self, SharedAccountsExactOutRoute
+    }, require_discriminator_eq, require_instruction_eq, state::{DonationState, MatchDonationState}
 };
 
 
 #[derive(Accounts)]
 pub struct FinalizeDonation<'info> {
+    #[account(
+        mut,
+        address = signing_authority::ID
+    )]
+    signer: Signer<'info>,
     #[account(mut)]
-    donor: Signer<'info>,
-    #[account(mut)]
-    charity: SystemAccount<'info>,
-
+    match_key: SystemAccount<'info>,
+    #[account(
+        mut,
+        address = bonk::ID
+    )]
+    bonk: Account<'info, Mint>,
+    #[account(
+        mut,
+        associated_token::mint = bonk,
+        associated_token::authority = signer,
+    )]
+    signer_bonk: Account<'info, TokenAccount>,
+    #[account(
+        mut,
+        associated_token::mint = bonk,
+        associated_token::authority = donation_state,
+    )]
+    bonk_vault: Account<'info, TokenAccount>,
     #[account(
         address = wsol::ID
     )]
@@ -50,10 +69,23 @@ pub struct FinalizeDonation<'info> {
     #[account(
         mut,
         associated_token::mint = wsol,
-        associated_token::authority = donor,
+        associated_token::authority = signer,
     )]
-    donor_wsol: Account<'info, TokenAccount>,
-
+    signer_wsol: Account<'info, TokenAccount>,
+    #[account(
+        mut,
+        seeds = [b"donation_state"],
+        bump,    
+    )]
+    donation_state: Account<'info, DonationState>,
+    #[account(
+        mut,
+        close = signer,
+        has_one = match_key,
+        seeds = [b"match_donation", match_donation_state.seed.to_le_bytes().as_ref()],
+        bump,
+    )]
+    match_donation_state: Account<'info, MatchDonationState>,
     /// CHECK: InstructionsSysvar account
     #[account(address = sysvar::instructions::ID)]
     instructions: UncheckedAccount<'info>,
@@ -63,7 +95,7 @@ pub struct FinalizeDonation<'info> {
 }
 
 impl<'info> FinalizeDonation<'info> {        
-    pub fn finalize_donation(&self) -> Result<()> {
+    pub fn finalize_donation(&mut self, bumps: FinalizeDonationBumps) -> Result<()> {
         
         /*
         
@@ -75,7 +107,7 @@ impl<'info> FinalizeDonation<'info> {
             - Won't work with CPI
             - Is directly preceded by a Jupiter Swap instruction
             - Which is directly preceded by a Donate instruction
-            - min_lamports_out matches the Donate instruction
+            - Contains the correct match Donation amount
         
         */
 
@@ -84,22 +116,23 @@ impl<'info> FinalizeDonation<'info> {
         let current_index = load_current_index_checked(&ixs)? as usize;
         require_gte!(current_index, 2, BonkPawsError::InvalidInstructionIndex);
 
-        if let Ok(ix) = load_instruction_at_checked(current_index - 2, &ixs) {
+        // Make sure we have a match IX
+        if let Ok(ix) = load_instruction_at_checked(current_index.checked_sub(2).ok_or(BonkPawsError::Overflow)?, &ixs) {
             // Instruction checks
             require_instruction_eq!(ix, crate::ID, crate::instruction::MatchDonation::DISCRIMINATOR, BonkPawsError::InvalidInstruction);
         } else {
             return Err(BonkPawsError::MissingDonateIx.into());
         }
 
-        let donation_amount: u64;
-
-        if let Ok(ix) = load_instruction_at_checked(current_index - 1, &ixs) {
-            require_instruction_eq!(ix, jupiter::ID, SharedAccountsRoute::DISCRIMINATOR, BonkPawsError::InvalidInstruction);
-            let shared_account_route_ix = SharedAccountsRoute::try_from_slice(&ix.data[8..])?;
-            donation_amount = shared_account_route_ix.quoted_out_amount.checked_mul(100_000).unwrap();
-        } else {
-            return Err(BonkPawsError::MissingDonateIx.into());
-        }
+        // Make sure we have a swap IX
+        let swap_ix = load_instruction_at_checked(
+            current_index.checked_sub(1).ok_or(BonkPawsError::Overflow)?,
+            &ixs
+        ).map_err(|_| BonkPawsError::MissingDonateIx)?;
+        require_instruction_eq!(swap_ix, jupiter::ID, SharedAccountsExactOutRoute::DISCRIMINATOR, BonkPawsError::InvalidInstruction);
+        let swap_ix_data = SharedAccountsExactOutRoute::try_from_slice(&swap_ix.data[8..])?;
+        
+        let donation_amount = swap_ix_data.out_amount;
 
         /*
         
@@ -114,11 +147,11 @@ impl<'info> FinalizeDonation<'info> {
 
         */
 
-        // Close wSOL account and send to the user
+        // Close wSOL account and send to the signer
         let close_wsol_accounts = CloseAccount {
-            account: self.donor_wsol.to_account_info(),
-            destination: self.donor.to_account_info(),
-            authority: self.donor.to_account_info()
+            account: self.signer_wsol.to_account_info(),
+            destination: self.signer.to_account_info(),
+            authority: self.signer.to_account_info()
         };
         let close_wsol_ctx = CpiContext::new(self.token_program.to_account_info(), close_wsol_accounts);
 
@@ -128,21 +161,51 @@ impl<'info> FinalizeDonation<'info> {
         
             Donate Native SOL To Charity Account
 
-            Finally, we refund the non-rent-exempt balance, or in other
-            words, the swapped SOL amount, to the Charity account,
-            completing our atomic optional match, swap and burn of funds
-            in a single transaction. :)
-
         */
         
         let transfer_accounts = Transfer {
-            from: self.donor.to_account_info(),
-            to: self.charity.to_account_info()
+            from: self.signer.to_account_info(),
+            to: self.match_key.to_account_info()
         };
 
         let transfer_ctx = CpiContext::new(self.system_program.to_account_info(), transfer_accounts);
 
         transfer(transfer_ctx, donation_amount)?;
+
+        // Transfer surplus bonk from the signer back to the vault
+        let transfer_accounts = SplTransfer {
+            from: self.signer_bonk.to_account_info(),
+            to: self.bonk_vault.to_account_info(),
+            authority: self.signer.to_account_info(),
+        };
+        let transfer_ctx = CpiContext::new(self.token_program.to_account_info(), transfer_accounts);
+
+        spl_transfer(transfer_ctx, self.signer_bonk.amount)?;
+
+        // Calculate how much BONK was spent to match
+        let bonk_matched_amount: u64 = self.bonk_vault.amount.checked_sub(self.match_donation_state.donation_amount).ok_or(BonkPawsError::Overflow)?;
+        // Calculate burn amount
+        let bonk_burn_amount: u64 = bonk_matched_amount.checked_div(100).ok_or(BonkPawsError::Overflow)?;
+
+        // Burn 1% of the bonk donated
+        let seeds = &[
+            b"donation_state".as_ref(),
+            &[bumps.donation_state],
+        ];
+        let signer_seeds = &[&seeds[..]];
+
+        let burn_accounts = Burn {
+            mint: self.bonk.to_account_info(),
+            from: self.bonk_vault.to_account_info(),
+            authority: self.donation_state.to_account_info(),
+        };
+        let burn_ctx = CpiContext::new_with_signer(self.token_program.to_account_info(), burn_accounts, signer_seeds);
+
+        burn(burn_ctx, bonk_burn_amount)?;
+
+        // Update the donation state
+        self.donation_state.sol_matched = self.donation_state.sol_matched.checked_add(donation_amount).ok_or(BonkPawsError::Overflow)?;
+        self.donation_state.bonk_burned = self.donation_state.bonk_burned.checked_add(bonk_burn_amount).ok_or(BonkPawsError::Overflow)?;
 
         Ok(())
     }

@@ -3,9 +3,8 @@ use anchor_lang::prelude::*;
 #[account]
 pub struct DonationState {
     pub bonk_burned: u64,
-    pub bonk_donated: u64,
-    pub bonk_matched: u64,
-
+    pub sol_donated: u64,
+    pub sol_matched: u64,
 }
 
 impl Space for DonationState {
@@ -29,8 +28,9 @@ pub struct DonationHistory {
     pub donor: Pubkey,
     pub id: u64,
     pub donation_amount: u64,
+    pub timestamp: i64
 }
 
 impl Space for DonationHistory {
-    const INIT_SPACE: usize = 8 + 32 + 8 + 8;
+    const INIT_SPACE: usize = 8 + 32 + 8 + 8 + 8;
 }

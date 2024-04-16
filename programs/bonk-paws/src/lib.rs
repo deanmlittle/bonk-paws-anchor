@@ -9,7 +9,7 @@ pub mod state;
 
 use contexts::*;
 
-declare_id!("4p78LV6o9gdZ6YJ3yABSbp3mVq9xXa4NqheXTB1fa4LJ");
+declare_id!("bfpP4enQQ7ajSLaMWhAy6wYZYmRV6uxVid3r5hphh68");
 
 #[program]
 pub mod bonk_paws {
@@ -24,6 +24,6 @@ pub mod bonk_paws {
     }
 
     pub fn finalize_donation(ctx: Context<FinalizeDonation>) -> Result<()> {
-        ctx.accounts.finalize_donation()
+        ctx.accounts.finalize_donation(ctx.bumps)
     }
 }
